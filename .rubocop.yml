@@ -3,7 +3,7 @@ AllCops:
   NewCops: enable
   TargetRubyVersion: 3.3
   Exclude:
-    - 'vendor/**/*.rb'
+    - 'vendor/**/*'
     - 'db/**/*.rb'
     - 'bin/**/*'
 
