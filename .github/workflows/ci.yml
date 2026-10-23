@@ -1,0 +1,99 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rspec:
+    name: RSpec
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: postgres://postgres:ci_password@localhost:5432/devop_test_test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: devop_test_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d devop_test_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3.6'
+          bundler-cache: true
+      - name: Prepare test database
+        run: bundle exec rails db:prepare
+      - name: Run specs
+        run: bundle exec rspec
+
+  lint:
+    name: RuboCop
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3.6'
+          bundler-cache: true
+      - name: Check Ruby style
+        run: bundle exec rubocop
+
+  smoke:
+    name: Compose smoke test
+    needs: [rspec, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      POSTGRES_PASSWORD: ci_compose_password
+      SECRET_KEY_BASE: ci-only-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start healthy app
+        run: docker compose up --build --detach --wait --wait-timeout 180
+      - name: Seed sample responses
+        run: docker compose exec -T web bundle exec rails db:seed
+      - name: Check endpoint status codes
+        shell: bash
+        run: |
+          for endpoint in status ping; do
+            status_code=$(curl --silent --show-error --output /tmp/response.json \
+              --write-out '%{http_code}' --connect-timeout 5 --max-time 10 \
+              "http://localhost:3000/${endpoint}")
+            echo "GET /${endpoint}: HTTP ${status_code}"
+            cat /tmp/response.json
+            echo
+            if [ "$status_code" != "200" ]; then
+              exit 1
+            fi
+            if [ "$endpoint" = "status" ]; then
+              jq -e '.status == "ok" and .database == "connected"' /tmp/response.json
+            fi
+          done
+      - name: Show container diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color
+      - name: Clean up containers and volumes
+        if: always()
+        run: docker compose down --volumes --remove-orphans
