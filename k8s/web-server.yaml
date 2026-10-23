@@ -8,34 +8,55 @@ data:
     <!DOCTYPE html>
     <html>
     <head>
-        <title>DevOps Challenge</title>
+        <title>DevOps Challenge - High Availability</title>
         <style>
-            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #f4f4f9; }
-            h1 { color: #333; }
+            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; background-color: #e8f5e9; }
+            h1 { color: #2e7d32; }
         </style>
     </head>
     <body>
-        <h1>Hello World! Simple HTML page in Kubernetes!</h1>
+        <h1>Hello World! Simple HTML with Auto-Healing!</h1>
     </body>
     </html>
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: static-web-server
+  name: robust-web-server
   namespace: devops-test
-  labels:
-    app: my-static-web
 spec:
-  containers:
-    - name: nginx-container
-      image: nginx:alpine
-      ports:
-        - containerPort: 80
-      volumeMounts:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: my-static-web
+  template:
+    metadata:
+      labels:
+        app: my-static-web
+    spec:
+      containers:
+        - name: nginx-container
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: html-volume
+              mountPath: /usr/share/nginx/html
+      volumes:
         - name: html-volume
-          mountPath: /usr/share/nginx/html
-  volumes:
-    - name: html-volume
-      configMap:
-        name: web-html-config
+          configMap:
+            name: web-html-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service-robust
+  namespace: devops-test
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+  selector:
+    app: my-static-web
